@@ -1,0 +1,231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PARTICIPANT
+  JUDGE
+  ADMIN
+  SUPER_ADMIN
+}
+enum ContestStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  FROZEN
+  ENDED
+  ARCHIVED
+}
+enum AccessMode {
+  OPEN
+  PERSONAL_CODE
+}
+enum ScoringMode {
+  ALL_OR_NOTHING
+  PARTIAL
+}
+enum Visibility {
+  DRAFT
+  PUBLISHED
+}
+enum CheckerType {
+  EXACT
+  TOKEN
+  PE_LENIENT
+  CUSTOM
+}
+enum JobStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+enum Verdict {
+  AC
+  WA
+  TLE
+  MLE
+  RE
+  CE
+  PE
+  IE
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  institution    String?
+  passwordHash   String?
+  googleSub      String?  @unique
+  role           Role     @default(PARTICIPANT)
+  disqualifiedAt DateTime?
+  suspendedUntil DateTime?
+  createdAt      DateTime @default(now())
+  registrations  Registration[]
+  submissions    Submission[]
+  runs           Run[]
+  auditEvents    AuditLog[]
+}
+
+model Contest {
+  id              String        @id @default(cuid())
+  slug            String        @unique
+  title           String
+  description     String        @default("")
+  rules           String        @default("")
+  status          ContestStatus @default(DRAFT)
+  accessMode      AccessMode    @default(OPEN)
+  joinCodeHash    String?       @unique
+  personalCodeHash String?
+  startAt         DateTime?
+  endAt           DateTime?
+  freezeAt        DateTime?
+  durationMinutes Int           @default(60)
+  penaltyMinutes  Int           @default(20)
+  scoringMode     ScoringMode   @default(ALL_OR_NOTHING)
+  reveal          Boolean       @default(false)
+  frozenLeaderboard Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  registrations   Registration[]
+  problems        ContestProblem[]
+  submissions     Submission[]
+  runs            Run[]
+  clarifications  Clarification[]
+}
+
+model Registration {
+  id        String   @id @default(cuid())
+  userId    String
+  contestId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contest   Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  @@unique([userId, contestId])
+  @@index([contestId, createdAt])
+}
+
+model Problem {
+  id             String       @id @default(cuid())
+  slug           String       @unique
+  title          String
+  statement      String       @db.Text
+  difficulty     String       @default("Medium")
+  tags           String[]     @default([])
+  points         Int          @default(100)
+  timeLimitMs    Int          @default(2000)
+  memoryLimitMb  Int          @default(256)
+  checker        CheckerType  @default(EXACT)
+  visibility     Visibility   @default(DRAFT)
+  starterCodes   Json         @default("{}")
+  referenceSolution String?   @db.Text
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  tests          TestCase[]
+  contests       ContestProblem[]
+  submissions    Submission[]
+  runs           Run[]
+}
+
+model ContestProblem {
+  id        String  @id @default(cuid())
+  contestId String
+  problemId String
+  label     String
+  points    Int
+  position  Int     @default(0)
+  contest   Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem   Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  @@unique([contestId, problemId])
+  @@unique([contestId, label])
+}
+
+model TestCase {
+  id        String   @id @default(cuid())
+  problemId String
+  name      String
+  input     String   @db.Text
+  expected  String   @db.Text
+  isPublic  Boolean  @default(false)
+  weight    Int      @default(1)
+  position  Int      @default(0)
+  deletedAt DateTime?
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  @@index([problemId, isPublic, position])
+}
+
+model Submission {
+  id            String    @id @default(cuid())
+  userId        String
+  contestId     String
+  problemId     String
+  language      String
+  source        String    @db.Text
+  sourceHash    String
+  status        JobStatus @default(QUEUED)
+  verdict       Verdict?
+  passed        Int       @default(0)
+  total         Int       @default(0)
+  scoreAwarded  Int       @default(0)
+  runtimeMs     Int?
+  memoryKb      Int?
+  compileMessage String?  @db.Text
+  failedTest    Int?
+  testResults   Json      @default("[]")
+  receivedAt    DateTime  @default(now())
+  judgedAt      DateTime?
+  user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  contest       Contest   @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem       Problem   @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  @@index([contestId, problemId, receivedAt])
+  @@index([userId, contestId, receivedAt])
+}
+
+model Run {
+  id          String    @id @default(cuid())
+  userId      String
+  contestId   String
+  problemId   String
+  language    String
+  source      String    @db.Text
+  customInput String?   @db.Text
+  status      JobStatus @default(QUEUED)
+  results     Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contest     Contest   @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem     Problem  @relation(fields: [problemId], references: [id], onDelete: Restrict)
+}
+
+model Clarification {
+  id        String   @id @default(cuid())
+  contestId String
+  userId    String
+  problemId String?
+  question  String   @db.Text
+  answer    String?  @db.Text
+  isPublic  Boolean  @default(true)
+  answeredBy String?
+  createdAt DateTime @default(now())
+  answeredAt DateTime?
+  contest   Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([targetType, targetId, createdAt])
+}
